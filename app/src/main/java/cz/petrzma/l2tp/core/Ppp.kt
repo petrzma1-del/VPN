@@ -92,15 +92,23 @@ class Ppp(
             PROTO_CHAP -> chap(d)
             PROTO_PAP -> pap(d)
             PROTO_CCP -> ccp(d)
-            0x0057, 0x8057, 0x80FB, 0x00FD -> protoReject(proto, d)
-            else -> protoReject(proto, d)
+            0x0057, 0x8057, 0x80FB, 0x00FD -> protoReject(proto, d, f)
+            else -> protoReject(proto, d, f)
         }
     }
 
-    private fun protoReject(proto: Int, d: ByteArray) {
+    private var rejCount = 0
+    private fun protoReject(proto: Int, d: ByteArray, raw: ByteArray) {
         if (!lcp.opened) return
-        log("PPP: odmítám protokol 0x${"%04x".format(proto)}")
-        send(frame(PROTO_LCP, pkt(8, nextId++ and 0xFF, Bb().u16(proto).bytes(d.copyOf(minOf(d.size, 64))).toByteArray())))
+        rejCount++
+        // Jen skutečné PPP protokoly (první bajt 0x00/0x80/0xC0/0xC2 apod. a lichý spodní bajt) mají smysl odmítat.
+        val plausible = (proto and 0x0001) == 1 && (proto and 0x8000 != 0 || proto < 0x4000)
+        if (rejCount <= 6) {
+            val hex = raw.take(32).joinToString("") { "%02x".format(it) }
+            log("PPP: neznámý rámec, proto 0x${"%04x".format(proto)}, ${raw.size} B: $hex")
+        } else if (rejCount % 200 == 0) log("PPP: dalších neznámých rámců: $rejCount")
+        if (plausible && rejCount <= 20)
+            send(frame(PROTO_LCP, pkt(8, nextId++ and 0xFF, Bb().u16(proto).bytes(d.copyOf(minOf(d.size, 64))).toByteArray())))
     }
 
     private fun ccp(d: ByteArray) {
